@@ -27,6 +27,16 @@ const messageHistory = [
     }
 ];
 
+// Função para verificar e limitar o histórico de mensagens
+function limitarHistoricoMensagens(maxMensagens = 7) {
+    // Mantém apenas as últimas `maxMensagens` mensagens no histórico
+    if (messageHistory.length > maxMensagens) {
+        messageHistory.splice(0, messageHistory.length - maxMensagens);
+    }
+}
+
+
+
 // Função para gerar uma resposta de IA usando o modelo Groq
 async function gerarRespostaIA(mensagemUsuario) {
     try {
@@ -36,6 +46,10 @@ async function gerarRespostaIA(mensagemUsuario) {
             content: mensagemUsuario,
         });
 
+        // Limita o histórico para evitar excesso de tokens
+        limitarHistoricoMensagens();
+
+        // Faz a chamada para o Groq API com o histórico atualizado
         const chatCompletion = await groq.chat.completions.create({
             messages: messageHistory,
             model: "llama-3.2-90b-vision-preview",
@@ -46,6 +60,7 @@ async function gerarRespostaIA(mensagemUsuario) {
             stop: null
         });
 
+        // Extrai a resposta do bot e adiciona ao histórico
         const respostaIA = chatCompletion.choices[0]?.message?.content || "Não consegui gerar uma resposta.";
         messageHistory.push({
             role: "assistant",
@@ -84,19 +99,33 @@ async function gerarRespostaImagem(message) {
 
         const res = await visionModel.invoke(input2);
 
-        // Verifica se a resposta contém 'content' e retorna a descrição da imagem
+        // Verifica se a resposta contém 'content' e armazena o histórico
+        let respostaIA;
         if (res && res.content) {
-            return res.content;
+            respostaIA = res.content;
+
+            // Adiciona a interação ao histórico de mensagens
+            messageHistory.push(
+                {
+                    role: "user",
+                    content: `[Imagem recebida do usuário: imagem.png`
+                },
+                {
+                    role: "assistant",
+                    content: respostaIA
+                }
+            );
         } else {
+            respostaIA = "Não consegui analisar a imagem. Tente novamente mais tarde.";
             console.error("Resposta da API não contém conteúdo válido:", res);
-            return "Não consegui analisar a imagem. Tente novamente mais tarde.";
         }
+
+        return respostaIA;
     } catch (error) {
         console.error("Erro ao processar a imagem:", error);
         return "Desculpe, houve um erro ao analisar a imagem.";
     }
 }
-
 
 
 // Evento para indicar que o cliente está pronto
