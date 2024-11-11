@@ -1,8 +1,9 @@
 require('dotenv').config();
-
+const fs = require('fs');
 const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const Groq = require('groq-sdk');
+const { ChatGoogleGenerativeAI, HumanMessage } = require('@langchain/google-genai');
 
 // Inicializa o cliente do WhatsApp
 const client = new Client({
@@ -11,6 +12,12 @@ const client = new Client({
 
 // Inicializa o cliente do Groq com a chave de API
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+// Configura o modelo do Google GenAI para análise de imagem
+const visionModel = new ChatGoogleGenerativeAI({
+    model: "gemini-1.5-flash",
+    maxOutputTokens: 2048,
+});
 
 // Armazena o histórico das mensagens para manter o contexto
 const messageHistory = [
@@ -29,7 +36,6 @@ async function gerarRespostaIA(mensagemUsuario) {
             content: mensagemUsuario,
         });
 
-        // Faz a chamada para o Groq API com o histórico atualizado
         const chatCompletion = await groq.chat.completions.create({
             messages: messageHistory,
             model: "llama-3.2-90b-vision-preview",
@@ -40,7 +46,6 @@ async function gerarRespostaIA(mensagemUsuario) {
             stop: null
         });
 
-        // Extrai a resposta do bot e adiciona ao histórico
         const respostaIA = chatCompletion.choices[0]?.message?.content || "Não consegui gerar uma resposta.";
         messageHistory.push({
             role: "assistant",
@@ -54,6 +59,46 @@ async function gerarRespostaIA(mensagemUsuario) {
     }
 }
 
+// Função para processar imagem e gerar uma resposta baseada no conteúdo da imagem
+async function gerarRespostaImagem(message) {
+    try {
+        const media = await message.downloadMedia();
+        const image = media.data; // Base64 da imagem
+
+        // Cria o conteúdo de entrada para o modelo
+        const input2 = [
+            {
+                role: "human",
+                content: [
+                    {
+                        type: "text",
+                        text: "Descreva a imagem a seguir."
+                    },
+                    {
+                        type: "image_url",
+                        image_url: `data:${media.mimetype};base64,${image}`
+                    }
+                ],
+            },
+        ];
+
+        const res = await visionModel.invoke(input2);
+
+        // Verifica se a resposta contém 'content' e retorna a descrição da imagem
+        if (res && res.content) {
+            return res.content;
+        } else {
+            console.error("Resposta da API não contém conteúdo válido:", res);
+            return "Não consegui analisar a imagem. Tente novamente mais tarde.";
+        }
+    } catch (error) {
+        console.error("Erro ao processar a imagem:", error);
+        return "Desculpe, houve um erro ao analisar a imagem.";
+    }
+}
+
+
+
 // Evento para indicar que o cliente está pronto
 client.on('ready', () => {
     console.log('Cliente está pronto!');
@@ -64,13 +109,21 @@ client.on('qr', qr => {
     qrcode.generate(qr, { small: true });
 });
 
-// Evento para responder a mensagens, apenas se não for uma mensagem do próprio bot
+// Evento para responder a mensagens, incluindo mensagens com imagem
 client.on('message_create', async message => {
-    if (message.fromMe) return; // Ignora as mensagens enviadas pelo próprio bot
+    if (message.fromMe) return;
 
-    // Gera a resposta usando a função de IA e envia ao usuário
-    const respostaIA = await gerarRespostaIA(message.body);
-    message.reply(respostaIA);
+    let resposta;
+    if (message.hasMedia) {
+        // Mensagem contém mídia (imagem)
+        resposta = await gerarRespostaImagem(message);
+    } else {
+        // Mensagem de texto
+        resposta = await gerarRespostaIA(message.body);
+    }
+
+    // Envia a resposta ao usuário
+    message.reply(resposta);
 });
 
 // Inicializa o cliente do WhatsApp
