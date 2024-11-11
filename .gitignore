@@ -1,0 +1,63 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-error.log
+dist/
+build/
+
+# Configuração de autenticação e credenciais
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Arquivos de configuração específicos de IDEs
+*.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Logs
+logs
+*.log
+logs/*.log
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Sistemas de backup e cache
+*.bak
+*.swp
+*.tmp
+.DS_Store
+
+# Dependências locais
+coverage/
+*.tgz
+.cache/
+.eslintcache
+
+# Uploads e mídia temporária
+uploads/
+media/
+temp/
+
+# Gerado por pacotes (como npm e yarn)
+package-lock.json
+yarn.lock
+
+# Ignore arquivos do sistema
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.pem
+
+# Git submodules e configs locais de Git
+.gitmodules
+.gitconfig
+
+# arquivos de whatsapp web js
+.wwebjs_auth/
+.wwebjs_cache/
