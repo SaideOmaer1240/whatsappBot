@@ -35,8 +35,6 @@ function limitarHistoricoMensagens(maxMensagens = 7) {
     }
 }
 
-
-
 // Função para gerar uma resposta de IA usando o modelo Groq
 async function gerarRespostaIA(mensagemUsuario) {
     try {
@@ -78,28 +76,30 @@ async function gerarRespostaIA(mensagemUsuario) {
 async function gerarRespostaImagem(message) {
     try {
         const media = await message.downloadMedia();
-        const image = media.data; // Base64 da imagem
+        // Adiciona o prefixo MIME para o formato base64 necessário
+        const image = `data:${media.mimetype};base64,${media.data}`;
 
-        // Cria o conteúdo de entrada para o modelo
+        // Cria o conteúdo de entrada para o modelo de visão do Google
         const input2 = [
             {
                 role: "human",
                 content: [
                     {
                         type: "text",
-                        text: "Descreva a imagem a seguir."
+                        text: "Analise a imagem fornecida e descreva-a com o máximo de detalhes possível. Caso existam letras ou textos na imagem, transcreva-os integralmente. Garanta que todas as informações visuais relevantes sejam mencionadas, incluindo cores, formas, objetos, contextos e quaisquer outros elementos presentes. Se for codigo depois da descrição, escreva o codigo da respetiva linguaguem presente na imagem, se for problema matematico, depois da descrição resolva o problema e apresente a resposta."
                     },
                     {
                         type: "image_url",
-                        image_url: `data:${media.mimetype};base64,${image}`
+                        image_url: image
                     }
                 ],
             },
         ];
 
+        // Invoca o modelo de visão para processar a imagem
         const res = await visionModel.invoke(input2);
 
-        // Verifica se a resposta contém 'content' e armazena o histórico
+        // Verifica se a resposta contém conteúdo válido
         let respostaIA;
         if (res && res.content) {
             respostaIA = res.content;
@@ -108,7 +108,7 @@ async function gerarRespostaImagem(message) {
             messageHistory.push(
                 {
                     role: "user",
-                    content: `[Imagem recebida do usuário: imagem.png`
+                    content: "[Imagem recebida do usuário: imagem.png]"
                 },
                 {
                     role: "assistant",
@@ -127,6 +127,14 @@ async function gerarRespostaImagem(message) {
     }
 }
 
+// Função para enviar resposta ao usuário, com controle de erros
+async function enviarResposta(message, resposta) {
+    try {
+        await message.reply(resposta);
+    } catch (error) {
+        console.error("Erro ao enviar a resposta ao usuário:", error);
+    }
+}
 
 // Evento para indicar que o cliente está pronto
 client.on('ready', () => {
@@ -151,8 +159,8 @@ client.on('message_create', async message => {
         resposta = await gerarRespostaIA(message.body);
     }
 
-    // Envia a resposta ao usuário
-    message.reply(resposta);
+    // Envia a resposta ao usuário com controle de erros
+    await enviarResposta(message, resposta);
 });
 
 // Inicializa o cliente do WhatsApp
