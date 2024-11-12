@@ -76,6 +76,7 @@ async function gerarRespostaIA(mensagemUsuario) {
 async function gerarRespostaImagem(message) {
     try {
         const media = await message.downloadMedia();
+        console.log(media.mimetype)
         // Adiciona o prefixo MIME para o formato base64 necessário
         const image = `data:${media.mimetype};base64,${media.data}`;
 
