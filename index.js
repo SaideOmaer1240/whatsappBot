@@ -1,5 +1,6 @@
 require('dotenv').config();
-const fs = require('fs');
+const fs = require('fs'); 
+const path = require("path");
 const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const Groq = require('groq-sdk');
@@ -10,57 +11,66 @@ const client = new Client({
     authStrategy: new LocalAuth()
 });
 
-// Inicializa o cliente do Groq com a chave de API
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-// Configura o modelo do Google GenAI para análise de imagem
 const visionModel = new ChatGoogleGenerativeAI({
     model: "gemini-1.5-flash",
     maxOutputTokens: 2048,
 });
 
-// Armazena o histórico das mensagens para manter o contexto
-const messageHistory = [
-    {
-        role: "system",
-        content: "Você é um assistente útil e amigável no WhatsApp, seu nome é Saíde Omar Saíde. Foi projetado para responder perguntas e fornecer informações com base no modelo Groq. Responda apenas às mensagens enviadas por usuários e ignore qualquer mensagem que você mesmo tenha enviado para evitar loops infinitos. Seja claro, objetivo e mantenha um tom profissional e amigável."
-    }
-];
+// Cria um objeto para armazenar históricos de mensagens para cada usuário
+const userHistories = {};
 
-// Função para verificar e limitar o histórico de mensagens
-function limitarHistoricoMensagens(maxMensagens = 7) {
-    // Mantém apenas as últimas `maxMensagens` mensagens no histórico
-    if (messageHistory.length > maxMensagens) {
-        messageHistory.splice(0, messageHistory.length - maxMensagens);
+// Função para baixar a mídia (imagem, áudio, etc.) de uma mensagem
+async function baixarMidia(message) {
+    try {
+        const media = await message.downloadMedia();
+        return {
+            mimetype: media.mimetype,
+            data: `data:${media.mimetype};base64,${media.data}`
+        };
+    } catch (error) {
+        console.error("Erro ao baixar a mídia:", error);
+        return null;
+    }
+}
+
+// Função para verificar e limitar o histórico de mensagens do usuário
+function limitarHistoricoMensagens(userId, maxMensagens = 7) {
+    if (userHistories[userId].length > maxMensagens) {
+        userHistories[userId].splice(0, userHistories[userId].length - maxMensagens);
     }
 }
 
 // Função para gerar uma resposta de IA usando o modelo Groq
-async function gerarRespostaIA(mensagemUsuario) {
+async function gerarRespostaIA(userId, mensagemUsuario) {
     try {
-        // Adiciona a mensagem do usuário ao histórico de mensagens
-        messageHistory.push({
+        // Cria um histórico inicial se o usuário ainda não existir
+        if (!userHistories[userId]) {
+            userHistories[userId] = [{
+                role: "system",
+                content: "Você é um assistente útil e amigável no WhatsApp, seu nome é Saíde Omar Saíde."
+            }];
+        }
+
+        // Adiciona a mensagem do usuário ao histórico
+        userHistories[userId].push({
             role: "user",
             content: mensagemUsuario,
         });
 
-        // Limita o histórico para evitar excesso de tokens
-        limitarHistoricoMensagens();
+        // Limita o histórico do usuário para evitar excesso de tokens
+        limitarHistoricoMensagens(userId);
 
-        // Faz a chamada para o Groq API com o histórico atualizado
         const chatCompletion = await groq.chat.completions.create({
-            messages: messageHistory,
+            messages: userHistories[userId],
             model: "llama-3.2-90b-vision-preview",
             temperature: 1,
             max_tokens: 1024,
-            top_p: 1,
-            stream: false,
-            stop: null
         });
 
-        // Extrai a resposta do bot e adiciona ao histórico
         const respostaIA = chatCompletion.choices[0]?.message?.content || "Não consegui gerar uma resposta.";
-        messageHistory.push({
+        
+        userHistories[userId].push({
             role: "assistant",
             content: respostaIA,
         });
@@ -73,53 +83,30 @@ async function gerarRespostaIA(mensagemUsuario) {
 }
 
 // Função para processar imagem e gerar uma resposta baseada no conteúdo da imagem
-async function gerarRespostaImagem(message) {
+async function gerarRespostaImagem(userId, mediaData){
     try {
-        const media = await message.downloadMedia();
-        console.log(media.mimetype)
-        // Adiciona o prefixo MIME para o formato base64 necessário
-        const image = `data:${media.mimetype};base64,${media.data}`;
+        const input = [{
+            role: "human",
+            content: [
+                { type: "text", text: "Analise a imagem fornecida e descreva-a detalhadamente." },
+                { type: "image_url", image_url: mediaData.data }
+            ],
+        }];
 
-        // Cria o conteúdo de entrada para o modelo de visão do Google
-        const input2 = [
-            {
-                role: "human",
-                content: [
-                    {
-                        type: "text",
-                        text: "Analise a imagem fornecida e descreva-a com o máximo de detalhes possível. Caso existam letras ou textos na imagem, transcreva-os integralmente. Garanta que todas as informações visuais relevantes sejam mencionadas, incluindo cores, formas, objetos, contextos e quaisquer outros elementos presentes. Se for codigo depois da descrição, escreva o codigo da respetiva linguaguem presente na imagem, se for problema matematico, depois da descrição resolva o problema e apresente a resposta."
-                    },
-                    {
-                        type: "image_url",
-                        image_url: image
-                    }
-                ],
-            },
-        ];
+        const res = await visionModel.invoke(input);
+        let respostaIA = res && res.content ? res.content : "Não consegui analisar a imagem.";
 
-        // Invoca o modelo de visão para processar a imagem
-        const res = await visionModel.invoke(input2);
-
-        // Verifica se a resposta contém conteúdo válido
-        let respostaIA;
-        if (res && res.content) {
-            respostaIA = res.content;
-
-            // Adiciona a interação ao histórico de mensagens
-            messageHistory.push(
-                {
-                    role: "user",
-                    content: "[Imagem recebida do usuário: imagem.png]"
-                },
-                {
-                    role: "assistant",
-                    content: respostaIA
-                }
-            );
-        } else {
-            respostaIA = "Não consegui analisar a imagem. Tente novamente mais tarde.";
-            console.error("Resposta da API não contém conteúdo válido:", res);
+        if (!userHistories[userId]) {
+            userHistories[userId] = [{
+                role: "system",
+                content: "Você é um assistente útil e amigável no WhatsApp, seu nome é Saíde Omar Saíde."
+            }];
         }
+
+        userHistories[userId].push(
+            { role: "user", content: "[Imagem recebida do usuário: imagem.png]" },
+            { role: "assistant", content: respostaIA }
+        );
 
         return respostaIA;
     } catch (error) {
@@ -128,7 +115,38 @@ async function gerarRespostaImagem(message) {
     }
 }
 
-// Função para enviar resposta ao usuário, com controle de erros
+// Função para transcrever áudio
+async function transcreverAudio(userId, mediaData) {
+    try { 
+        const tempFilePath = path.join(__dirname, `audio_${Date.now()}.mp3`);
+
+        // Decodifica e salva o áudio no caminho temporário
+        const base64Data = mediaData.data.split(",")[1];
+        fs.writeFileSync(tempFilePath, base64Data, { encoding: "base64" });
+
+        // Realiza a transcrição usando o Groq
+        const transcription = await groq.audio.transcriptions.create({
+            file: fs.createReadStream(tempFilePath),
+            model: "whisper-large-v3-turbo",
+        });
+
+        // Exclui o arquivo temporário após a transcrição
+        fs.unlinkSync(tempFilePath);
+
+         
+        const transcricao = transcription.text || "Não consegui transcrever o áudio.";
+
+        resposta = await gerarRespostaIA(userId, transcricao) || "Não consegui transcrever o áudio.";
+ 
+        return resposta;
+    } catch (error) {
+        console.error("Erro ao transcrever o áudio:", error);
+        return "Desculpe, houve um erro ao processar o áudio.";
+    }
+}
+
+
+// Função para enviar resposta ao usuário com controle de erros
 async function enviarResposta(message, resposta) {
     try {
         await message.reply(resposta);
@@ -142,25 +160,36 @@ client.on('ready', () => {
     console.log('Cliente está pronto!');
 });
 
-// Exibe o QR code no terminal para autenticação no WhatsApp Web
 client.on('qr', qr => {
     qrcode.generate(qr, { small: true });
 });
 
-// Evento para responder a mensagens, incluindo mensagens com imagem
+// Evento para responder a mensagens, incluindo mensagens com imagem e áudio
 client.on('message_create', async message => {
     if (message.fromMe) return;
 
+    const userId = message.from; // Usa o número de telefone do WhatsApp como ID único do usuário
+    console.log(userId);
     let resposta;
+
     if (message.hasMedia) {
-        // Mensagem contém mídia (imagem)
-        resposta = await gerarRespostaImagem(message);
+        const mediaData = await baixarMidia(message);
+
+        if (mediaData) {
+            if (mediaData.mimetype.startsWith('image')) {
+                resposta = await gerarRespostaImagem(userId, mediaData);
+            } else if (mediaData.mimetype.startsWith('audio')) {
+                resposta = await transcreverAudio(userId, mediaData);
+            } else {
+                resposta = "Tipo de mídia não suportado.";
+            }
+        } else {
+            resposta = "Não consegui baixar a mídia.";
+        }
     } else {
-        // Mensagem de texto
-        resposta = await gerarRespostaIA(message.body);
+        resposta = await gerarRespostaIA(userId, message.body);
     }
 
-    // Envia a resposta ao usuário com controle de erros
     await enviarResposta(message, resposta);
 });
 
